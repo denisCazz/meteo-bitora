@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  /* Sfondo scuro con un gradiente "atmosferico" fisso */
+  background: radial-gradient(
+      1200px 600px at 70% -10%,
+      rgba(56, 189, 248, 0.12),
+      transparent
+    ),
+    radial-gradient(
+      1000px 500px at 0% 100%,
+      rgba(99, 102, 241, 0.1),
+      transparent
+    ),
+    #070b14;
+  background-attachment: fixed;
+}
+
+/* Utility glassmorphism riutilizzabile per le card semitrasparenti */
+@layer components {
+  .glass {
+    @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl;
+  }
+}
+
+/* La mappa Leaflet deve riempire il contenitore e stare sotto agli overlay UI */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  background: #0b1020;
+  font-family: inherit;
+  z-index: 0;
+}
+
+/* Adattiamo i controlli di Leaflet al tema scuro */
+.leaflet-control-attribution {
+  background: rgba(7, 11, 20, 0.7) !important;
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+.leaflet-control-attribution a {
+  color: rgba(56, 189, 248, 0.8) !important;
+}
+.leaflet-bar a {
+  background: rgba(17, 25, 40, 0.9) !important;
+  color: #e2e8f0 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+.leaflet-bar a:hover {
+  background: rgba(30, 41, 59, 0.95) !important;
+}
