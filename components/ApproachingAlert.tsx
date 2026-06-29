@@ -55,7 +55,10 @@ export default function ApproachingAlert({ analysis, loading }: Props) {
 
       <div className="min-w-0 flex-1">
         <p className={`text-sm font-semibold ${style.text}`}>{style.title}</p>
-        <p className="truncate text-sm text-slate-200">{analysis.message}</p>
+        {/* Niente truncate: su mobile la didascalia deve poter andare a capo */}
+        <p className="text-sm leading-snug text-slate-200">
+          {analysis.message}
+        </p>
       </div>
 
       {/* Bussola direzionale + ETA per l'avvicinamento */}
