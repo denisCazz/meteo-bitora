@@ -64,7 +64,9 @@ export default function RadarMap({ center, frames, approach }: Props) {
       center: [center.lat, center.lon],
       zoom: ZOOM,
       minZoom: 4,
-      maxZoom: 18,
+      // Oltre lo zoom 13 il radar (nativo z7) diventa troppo sgranato:
+      // limitiamo lo zoom massimo mantenendo comunque ampio margine.
+      maxZoom: 13,
       zoomControl: true,
       attributionControl: true,
     });
@@ -186,16 +188,20 @@ export default function RadarMap({ center, frames, approach }: Props) {
       }
     });
 
-    // Crea i layer mancanti (opacità 0 = pre-caricamento silenzioso).
+    // Crea i layer mancanti. Li teniamo quasi invisibili (0.001 e non 0) così
+    // il browser pre-carica davvero i tile: è il trucco usato dall'esempio
+    // ufficiale di RainViewer per ottenere un'animazione senza "lampeggio".
     frames.forEach((frame) => {
       if (layers.has(frame.time)) return;
       const layer = L.tileLayer(frame.tileUrl, {
-        opacity: 0,
+        opacity: 0.001,
         zIndex: 10,
-        // I tile radar non esistono a tutti gli zoom: oltre maxNativeZoom
-        // Leaflet riscala i tile invece di richiederne di inesistenti
-        // (è ciò che causava l'errore "zoom level not supported").
-        maxNativeZoom: 11,
+        tileSize: 256,
+        // IMPORTANTISSIMO: i tile radar RainViewer esistono SOLO fino allo
+        // zoom 7. Oltre questo livello Leaflet deve RISCALARE il tile z7
+        // invece di richiederne di inesistenti: senza questo si ottengono
+        // tile vuoti e l'errore "zoom level not supported" quando si zooma.
+        maxNativeZoom: 7,
         maxZoom: 18,
         updateWhenZooming: false,
         keepBuffer: 4,
@@ -218,7 +224,8 @@ export default function RadarMap({ center, frames, approach }: Props) {
     if (!frame) return;
 
     frameLayersRef.current.forEach((layer, time) => {
-      layer.setOpacity(time === frame.time ? 0.7 : 0);
+      // 0.001 (e non 0) sui frame nascosti: i tile restano pre-caricati.
+      layer.setOpacity(time === frame.time ? 0.75 : 0.001);
     });
   }, [frameIndex, frames]);
 
