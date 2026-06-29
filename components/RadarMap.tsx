@@ -45,8 +45,13 @@ function formatTime(unix: number): string {
 export default function RadarMap({ center, frames, approach }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const radarLayerRef = useRef<L.TileLayer | null>(null);
   const overlayRef = useRef<L.LayerGroup | null>(null);
+  // Un layer di tile per ogni frame radar: animiamo cambiando opacità invece
+  // di ricaricare gli URL, così la mappa non "lampeggia".
+  const frameLayersRef = useRef<Map<number, L.TileLayer>>(new Map());
+  // Evita di reimpostare la vista (e quindi lo zoom dell'utente) quando
+  // cambiano solo i dati: ricentriamo solo quando cambiano le coordinate.
+  const lastCenterRef = useRef<string>("");
 
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
@@ -58,9 +63,14 @@ export default function RadarMap({ center, frames, approach }: Props) {
     const map = L.map(containerRef.current, {
       center: [center.lat, center.lon],
       zoom: ZOOM,
+      minZoom: 4,
+      // Oltre lo zoom 13 il radar (nativo z7) diventa troppo sgranato:
+      // limitiamo lo zoom massimo mantenendo comunque ampio margine.
+      maxZoom: 13,
       zoomControl: true,
       attributionControl: true,
     });
+    lastCenterRef.current = `${center.lat},${center.lon}`;
 
     // Mappa di base scura (CartoDB dark matter).
     L.tileLayer(
@@ -68,7 +78,7 @@ export default function RadarMap({ center, frames, approach }: Props) {
       {
         attribution:
           '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: 19,
+        maxZoom: 18,
       },
     ).addTo(map);
 
@@ -80,19 +90,29 @@ export default function RadarMap({ center, frames, approach }: Props) {
     return () => {
       map.remove();
       mapRef.current = null;
-      radarLayerRef.current = null;
       overlayRef.current = null;
+      frameLayersRef.current = new Map();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 2) Aggiorna centro e overlay quando cambiano coordinate o avvicinamento.
+  // 2) Ricentra la mappa SOLO quando cambiano davvero le coordinate, così non
+  //    azzeriamo lo zoom scelto dall'utente ad ogni aggiornamento dati.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const key = `${center.lat},${center.lon}`;
+    if (key === lastCenterRef.current) return;
+    lastCenterRef.current = key;
+    map.setView([center.lat, center.lon], ZOOM);
+  }, [center]);
+
+  // 3) Aggiorna gli overlay (marker, cerchio, freccia) senza toccare la vista.
   useEffect(() => {
     const map = mapRef.current;
     const overlay = overlayRef.current;
     if (!map || !overlay) return;
 
-    map.setView([center.lat, center.lon], ZOOM);
     overlay.clearLayers();
 
     // Marker dell'utente (divIcon pulsante per evitare immagini esterne).
@@ -150,39 +170,71 @@ export default function RadarMap({ center, frames, approach }: Props) {
     }
   }, [center, approach]);
 
-  // 3) All'arrivo di nuovi frame, posizioniamoci sull'ultimo dato osservato.
+  // 4) All'arrivo di nuovi frame: pre-creiamo un layer (invisibile) per ciascun
+  //    frame e rimuoviamo quelli non più presenti. Pre-caricare i tile evita il
+  //    "lampeggio" quando si passa da un frame all'altro.
   useEffect(() => {
-    if (frames.length === 0) return;
+    const map = mapRef.current;
+    if (!map || frames.length === 0) return;
+
+    const layers = frameLayersRef.current;
+    const validTimes = new Set(frames.map((f) => f.time));
+
+    // Rimuovi i layer dei frame non più disponibili.
+    layers.forEach((layer, time) => {
+      if (!validTimes.has(time)) {
+        map.removeLayer(layer);
+        layers.delete(time);
+      }
+    });
+
+    // Crea i layer mancanti. Li teniamo quasi invisibili (0.001 e non 0) così
+    // il browser pre-carica davvero i tile: è il trucco usato dall'esempio
+    // ufficiale di RainViewer per ottenere un'animazione senza "lampeggio".
+    frames.forEach((frame) => {
+      if (layers.has(frame.time)) return;
+      const layer = L.tileLayer(frame.tileUrl, {
+        opacity: 0.001,
+        zIndex: 10,
+        tileSize: 256,
+        // IMPORTANTISSIMO: i tile radar RainViewer esistono SOLO fino allo
+        // zoom 7. Oltre questo livello Leaflet deve RISCALARE il tile z7
+        // invece di richiederne di inesistenti: senza questo si ottengono
+        // tile vuoti e l'errore "zoom level not supported" quando si zooma.
+        maxNativeZoom: 7,
+        maxZoom: 18,
+        updateWhenZooming: false,
+        keepBuffer: 4,
+      });
+      layer.addTo(map);
+      layers.set(frame.time, layer);
+    });
+
+    // Posizioniamoci sull'ultimo dato osservato (presente).
     let lastPast = frames.findIndex((f) => f.isForecast);
     if (lastPast === -1) lastPast = frames.length - 1;
     else lastPast = Math.max(0, lastPast - 1);
     setFrameIndex(lastPast);
   }, [frames]);
 
-  // 4) Aggiorna il layer radar quando cambia il frame corrente.
+  // 5) Cambio frame: mostriamo solo il layer corrente regolando l'opacità.
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || frames.length === 0) return;
-
+    if (frames.length === 0) return;
     const frame = frames[frameIndex];
     if (!frame) return;
 
-    if (!radarLayerRef.current) {
-      radarLayerRef.current = L.tileLayer(frame.tileUrl, {
-        opacity: 0.65,
-        zIndex: 10,
-      }).addTo(map);
-    } else {
-      radarLayerRef.current.setUrl(frame.tileUrl);
-    }
+    frameLayersRef.current.forEach((layer, time) => {
+      // 0.001 (e non 0) sui frame nascosti: i tile restano pre-caricati.
+      layer.setOpacity(time === frame.time ? 0.75 : 0.001);
+    });
   }, [frameIndex, frames]);
 
-  // 5) Animazione: avanza il frame quando "playing" è attivo.
+  // 6) Animazione: avanza il frame quando "playing" è attivo.
   useEffect(() => {
     if (!playing || frames.length === 0) return;
     const id = setInterval(() => {
       setFrameIndex((i) => (i + 1) % frames.length);
-    }, 700);
+    }, 800);
     return () => clearInterval(id);
   }, [playing, frames]);
 
